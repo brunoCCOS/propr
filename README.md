@@ -1,22 +1,24 @@
 # propr
 
-`propr` is a Rust command-line tool that parses a small expression language,
-type-checks it, and generates TikZ output.
+`propr` is a Rust compiler for **string diagrams of symmetric monoidal theories**
+(also called **PROPs** — product and permutation categories). It parses an
+expression, type-checks arities and coarities, and emits a TikZ picture of the
+corresponding string diagram.
 
 ## What it accepts
 
-The expression language currently supports:
+The expression language implements the syntax of PROPs:
 
-- `id(n)`
-- `swap(a,b)`
-- generator names like `foo` and `bar(1,2,3)`
-- composition with `;`
-- tensor with `*`
+- `id(n)` — identity on `n` wires
+- `swap(m,n)` — symmetry permuting an `m` block past an `n` block
+- user-defined generators like `mult` or `sum(1,2)`
+- sequential composition with `;`
+- parallel composition (tensor) with `*`
 - parentheses for grouping
 
 Examples:
 
-- `a * b ; c * d`
+- `mult * copy ; id(1) * swap(1,1)`
 - `id(3) ; swap(1,2)`
 - `f(1,2) ; (g * h)`
 

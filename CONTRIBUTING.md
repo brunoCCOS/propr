@@ -1,22 +1,17 @@
-# Contributing to propc
+# Contributing to propr
 
-This guide walks through every piece of the compiler so that a new contributor
-can read the source top-to-bottom and know exactly what each line is doing and
-why. The aim is to be exhaustive rather than terse — when in doubt, prefer
-explaining over assuming background.
-
-The reader is assumed to know Go and basic LaTeX/TikZ. No prior exposure to
-PROPs (the algebraic structure being compiled) is required.
+This guide explains the architecture of the compiler so you can navigate the
+source and make changes with confidence.
 
 ---
 
 ## 1. What the tool does
 
-A **PROP** ("product and permutations category") is a small algebraic
-formalism: morphisms have an *arity* `A` (number of input wires) and a
-*coarity* `C` (number of output wires), and they can be combined in two ways:
+A **PROP** ("product and permutations category") is an algebraic structure:
+morphisms have an *arity* (number of input wires) and a *coarity* (number of
+output wires), and they combine in two ways:
 
-- **Sequential composition** `f ; g`: only valid when `coarity(f) = arity(g)`;
+- **Sequential composition** `f ; g`: valid when `coarity(f) = arity(g)`;
   produces a morphism `arity(f) → coarity(g)`.
 - **Parallel composition** (tensor) `f * g`: always valid; produces a morphism
   `arity(f) + arity(g) → coarity(f) + coarity(g)`.
@@ -24,44 +19,34 @@ formalism: morphisms have an *arity* `A` (number of input wires) and a
 Two structural primitives are built in:
 
 - `id(n)` — identity on `n` wires (`n → n`).
-- `swap(m, n)` — symmetry σ permuting an `m`-block past an `n`-block
+- `swap(m,n)` — symmetry permuting an `m`-block past an `n`-block
   (`m+n → m+n`).
 
-All other morphisms are **user-defined generators**: named atoms declared in a
-JSON file with their arity, coarity, and an associated TikZ pic.
+All other morphisms are **user-defined generators**: named atoms declared in
+code with their arity, coarity, visual wire counts, and an associated TikZ pic
+name.
 
-The compiler takes an expression like `(id(1) * mult) ; swap(1,1)` and emits a
-`tikzpicture` block that renders it as a string diagram. That's it.
+The compiler takes an expression like `mult * copy ; id(1) * swap(1,1)` and
+emits a `tikzpicture` block that renders it as a string diagram.
 
 ---
 
 ## 2. Repository layout
 
 ```
-cmd/propc/        CLI entry point. main.go drives the pipeline.
-src/lexer/        Tokenizer, token kinds, generator metadata struct.
-src/parser/       Pratt-style parser. Produces the AST.
-src/typecheck/    Arity/coarity checker.
-src/codegen/      TikZ emitter. The bulk of the geometric reasoning.
-src/loader/       Reads generators.json (from disk or from the embedded copy).
-src/assets/       go:embed targets. The canonical .tikz files live in
-                  material/ — sync-assets copies them here before each build.
-
-material/         Author-facing TikZ files. main.tex \input's these directly.
-cmd/propc/        propc CLI.
-.github/workflows/test.yml   CI (vet + race tests + build).
-Makefile          build / test / lint / sync-assets / install / clean.
+src/
+  main.rs           CLI entry point.
+  lib.rs            Public API: compile(expr, env) -> TikZ string.
+  lexer/
+    scan.rs         Character scanner / tokenizer.
+    tokens.rs       TokenKind and Token definitions.
+    generator.rs    Generator metadata struct.
+  parser/
+    engine.rs       Recursive-descent parser.
+    ast.rs          AST node types.
+  typechecker.rs    Arity/coarity checker.
+  codegen.rs        TikZ emitter — the largest module.
 ```
-
-Two things to internalise:
-
-1. **The Go module path is `propc`**. When you publish, change `go.mod` to
-   `github.com/<user>/propc` so `go install ...@latest` works for end users.
-2. **`material/` is the source of truth** for the TikZ pic definitions and
-   styles. `src/assets/` exists only because `//go:embed` requires the files
-   to be inside the embedding package's directory tree. The `sync-assets`
-   Makefile target enforces the copy. Never edit `src/assets/generator.tikz`
-   by hand — your changes will be overwritten on the next `make build`.
 
 ---
 
@@ -70,562 +55,268 @@ Two things to internalise:
 ```
 source string
   │
-  ▼  lexer.Tokenize           (src/lexer)
-[]lexer.Token
+  ▼  scan::Lexer::tokenize        (src/lexer/scan.rs)
+Vec<Token>
   │
-  ▼  parser.Parse             (src/parser)
-parser.Node  (an AST)
+  ▼  engine::parse                (src/parser/engine.rs)
+ast::Expr
   │
-  ▼  typecheck.Check          (src/typecheck)
-typecheck.Sig                 — succeeds or fails with a clear error
+  ▼  typechecker::check           (src/typechecker.rs)
+typechecker::Sig                  — succeeds or fails with a clear error
   │
-  ▼  codegen.Generate         (src/codegen)
-string  (a complete \begin{tikzpicture}…\end{tikzpicture})
+  ▼  codegen::generate            (src/codegen.rs)
+String  (a complete \begin{tikzpicture}…\end{tikzpicture})
 ```
 
-Each stage is independently testable and has its own `_test.go` file. Errors
-flow up via `error` returns; no panics.
+Each stage is independently testable.
 
 ---
 
-## 4. Lexer (`src/lexer`)
+## 4. Lexer (`src/lexer/`)
 
-### 4.1 Tokens (`tokens.go`)
+### 4.1 Tokens (`tokens.rs`)
 
-The token kinds are:
-
-```go
-EOF, LPAREN, RPAREN, COMMA, COMP, TENSOR, NUMBER, ID, SWAP, IDENT
-```
-
-`COMP` is `;`, `TENSOR` is `*`. `ID` and `SWAP` are *keywords* — the lexer
-matches the literal strings `"id"` and `"swap"` and returns these kinds
-instead of `IDENT`. Anything else that looks like an identifier becomes
-`IDENT` and is later resolved against the generator table by the typechecker.
-
-`Token` carries the kind, the original string slice (`Value`), and the byte
-offset in the source (`Pos`). `Pos` is used in error messages so a user can
-pinpoint where their expression broke.
-
-### 4.2 Tokenizing (`lexer.go`)
-
-The lexer is a plain rune-slice scanner with a `pos` index. The whole API is:
-
-- `New(input)` — constructor.
-- `Next()` — return the next token (or EOF).
-- `Tokenize()` — drive `Next()` in a loop and return `[]Token`.
-
-`peek()` and `advance()` are the standard helpers. `skipWhitespace()` is run
-before each token. Identifiers follow the usual rule: start with a letter or
-underscore, continue with letters, digits, or underscores. Numbers are an
-unsigned run of digits (no negatives, no decimals — arity is `uint`).
-
-The only unusual choice is that `\*` is the tensor operator. It's an artefact
-of using ASCII; rebind in `Next()` if you want a different glyph.
-
-### 4.3 Generator metadata (`generators.go`)
-
-`Generator` is the metadata struct, not the AST node:
-
-```go
-type Generator struct {
-    Value   string  `json:"name"`
-    Arity   uint    `json:"arity"`
-    Coarity uint    `json:"coarity"`
-    Symbol  string  `json:"symbol,omitempty"`
-    Pic     string  `json:"pic,omitempty"`
-    Width   float64 `json:"width,omitempty"`
-    Height  float64 `json:"height,omitempty"`
+```rust
+pub enum TokenKind {
+    Number(u32),
+    Ident(String),
+    Id,
+    Swap,
+    Lparen,
+    Rparen,
+    Comma,
+    Comp,   // ;
+    Tensor, // *
+    Eof,
 }
 ```
 
-`Value` is the lookup key used by the typechecker (the field is called
-`Value` for historical reasons; in the JSON it's `"name"`). `Pic` is the
-name of the TikZ pic that draws this generator; if empty the lookup falls
-back to `Value`. `Symbol` is currently informational only — it's where a
-unicode glyph for the operator would live if you ever wanted to render a
-prettified expression. `Width` and `Height` override the per-box defaults
-(1 × 1) in codegen.
+`Id` and `Swap` are **keywords** — the lexer matches `"id"` and `"swap"` and
+returns these kinds instead of `Ident`. Everything else alphabetic becomes
+`Ident`.
 
-This struct lives in `lexer` for cyclic-import reasons: the typechecker
-imports `lexer`, so does `loader`, so does `cmd/propc`, and putting it
-anywhere else would force a new shared package. It's a known wart.
+`Token` carries the kind and the byte offset in the source (`pos`), used in
+error messages.
+
+### 4.2 Scanning (`scan.rs`)
+
+The lexer is a plain char-slice scanner with a `pos` index:
+
+- `new(input)` — constructor.
+- `advance_token()` — return the next token (or `Eof`).
+- `tokenize()` — drive `advance_token()` in a loop and return `Vec<Token>`.
+
+`peek()` and `advance()` are the standard helpers. `skip_whitespace()` runs
+before each token. Identifiers start with a letter or underscore and continue
+with letters, digits, or underscores. Numbers are unsigned digit runs.
+
+### 4.3 Generator metadata (`generator.rs`)
+
+```rust
+pub struct Generator {
+    pub value: String,
+    pub params: Vec<String>,
+    pub arity: u32,
+    pub coarity: u32,
+    pub visual_arity: Option<u32>,
+    pub visual_coarity: Option<u32>,
+    pub symbol: String,
+    pub pic: String,
+    pub width: f32,
+    pub height: f32,
+}
+```
+
+`value` is the lookup key used by the typechecker. `pic` is the name of the
+TikZ pic that draws this generator; if empty, falls back to `value`.
+`visual_arity` / `visual_coarity` control how many visual wires the box has
+(several type-level wires can bundle into one visual wire). `width` and
+`height` override the per-box default (1×1) in codegen.
 
 ---
 
-## 5. Parser (`src/parser`)
+## 5. Parser (`src/parser/`)
 
-### 5.1 AST (`ast.go`)
+### 5.1 AST (`ast.rs`)
 
-The AST is five concrete node types, all implementing the empty
-`Node` marker interface:
-
-```go
-Comp   { Left, Right Node }       // f ; g
-Tensor { Left, Right Node }       // f * g
-Id     { N uint }                 // id(n)
-Swap   { M, N uint }              // swap(m,n)
-Gen    { Name string }            // a user-defined name
+```rust
+pub enum Expr {
+    Comp(Box<Expr>, Box<Expr>),     // f ; g
+    Tensor(Box<Expr>, Box<Expr>),   // f * g
+    Id(u32),                        // id(n)
+    Swap(u32, u32),                 // swap(m,n)
+    Gen { name: String, args: Vec<u32> },  // user-defined
+}
 ```
 
-That's it. There is no `Paren` node — grouping disappears during parsing.
+No `Paren` node — grouping disappears during parsing.
 
-### 5.2 Grammar and precedence (`parser.go`)
-
-The grammar is:
+### 5.2 Grammar and precedence (`engine.rs`)
 
 ```
 expr  := term ( ';' term )*
 term  := atom ( '*' atom )*
 atom  := 'id'   '(' NUMBER ')'
        | 'swap' '(' NUMBER ',' NUMBER ')'
-       | IDENT
+       | IDENT  ( '(' NUMBER ( ',' NUMBER )* ')' )?
        | '(' expr ')'
 ```
 
 `*` binds tighter than `;`, both are left-associative. So `a*b ; c*d` parses
-as `(a*b) ; (c*d)`, and `a;b;c` parses as `(a;b);c`. These are properties of
-the recursive-descent structure — `parseExpr` consumes one `parseTerm` then a
-sequence of `; parseTerm`, and `parseTerm` does the same for `* parseAtom`.
-
-`parseArgs(n)` is the helper for the keyword forms. It parses a fixed-length
-comma-separated number list inside parens and returns `[]uint`. Errors
-surface immediately with the position carried by the offending token.
-
-The parser is hand-written; there is no generated state machine. Keep it that
-way unless the grammar starts to grow.
+as `(a*b) ; (c*d)`, and `a;b;c` parses as `(a;b);c`. The parser is hand-written
+recursive descent.
 
 ---
 
-## 6. Typechecker (`src/typecheck`)
+## 6. Typechecker (`src/typechecker.rs`)
 
-### 6.1 Sig and Env
+The typechecker verifies arity/coarity consistency:
 
-```go
-type Sig struct{ Arity, Coarity uint }
-type Env map[string]lexer.Generator
+```rust
+pub struct Sig {
+    pub arity: u32,
+    pub coarity: u32,
+}
+
+pub type Env = HashMap<String, Generator>;
 ```
 
-`Sig` is the pair `(A, C)` the typechecker derives for every node. `Env`
-maps a generator's `Value` (its name as used in expressions) to its metadata.
-`NewEnv([]Generator)` builds the map and rejects nothing — duplicate
-detection happens in the loader (§9).
+`check(expr, env)` is structural recursion:
 
-### 6.2 Check recursion (`typecheck.go`)
+- `Id(n)` → `Sig { n, n }`.
+- `Swap(m,n)` → `Sig { m+n, m+n }`.
+- `Gen { name, .. }` → look up in env, return its `Sig`. Error if missing.
+- `Tensor(l, r)` → recurse, return `Sig { l.arity + r.arity, l.coarity + r.coarity }`.
+- `Comp(l, r)` → recurse, verify `l.coarity == r.arity`. Error on mismatch.
 
-`Check(n, env)` is a textbook structural recursion:
-
-- `Id{N}` → `Sig{N, N}`.
-- `Swap{M, N}` → `Sig{M+N, M+N}`.
-- `Gen{Name}` → look up in env, return its `Sig`. Returns an
-  "unknown generator" error if missing.
-- `Tensor{L, R}` → recurse on both, return `Sig{L.A + R.A, L.C + R.C}`.
-- `Comp{L, R}` → recurse on both. **Verifies `L.Coarity == R.Arity`**.
-  On mismatch, returns a structured error naming both sides.
-
-There are no inference unknowns — every node has a definite signature. That
-makes errors precise and the algorithm linear in AST size.
+The checker is linear in AST size.
 
 ---
 
-## 7. Codegen (`src/codegen`)
+## 7. Codegen (`src/codegen.rs`)
 
-This is the largest and most subtle file. Read this section carefully before
-making changes — many small choices interact.
+This is the largest module. Read this section carefully before making changes.
 
-### 7.1 Mental model: every subdiagram is a `box`
+### 7.1 Mental model: every subdiagram is a `Layout`
 
-```go
-type box struct {
-    w, h        float64
-    left, right []string
-    body        string
+```rust
+struct Layout {
+    width: f32,
+    height: f32,
+    left: Vec<String>,   // anchor names on the left edge
+    right: Vec<String>,  // anchor names on the right edge
+    body: String,        // TikZ source for the interior
 }
 ```
 
-A `box` is the result of rendering a subexpression. Two invariants hold for
-every box:
+Two invariants hold for every `Layout`:
 
-1. **Tip alignment**: the box exposes coordinate *names* (TikZ
-   `\coordinate (…)` identifiers) on its left and right edges. The
-   left names correspond to its arity wires, top-first; the right
-   names correspond to its coarity wires, top-first.
-2. **Frame**: in the box's own local coordinate system, the
-   bounding rectangle is `[0, w] × [0, h]`. Every left tip is at
-   `x = 0`. Every right tip is at `x = w`. Tips at the same wire
-   index have the same y after composition by construction.
+1. **Tip alignment**: the `left` anchors correspond to arity wires (top-first),
+   `right` anchors to coarity wires (top-first).
+2. **Frame**: bounding rectangle is `[0, width] × [0, height]`. Left tips at
+   `x = 0`, right tips at `x = width`. Matching wire indices share the same y
+   after composition by construction.
 
-When boxes are combined (tensor / composition) they are placed inside
-TikZ `scope` blocks with `shift={…}`. The named coordinates remain
-globally accessible because TikZ coordinates are not scope-local.
+### 7.2 `Renderer`
 
-`body` is the TikZ source for the box's interior. It is emitted *as-is*
-inside the parent scope. Because the body uses globally-unique anchor
-names (generated by `renderer.id()`), there is no name collision when
-the same subexpression is shifted multiple times.
-
-### 7.2 The pic frame convention
-
-User-defined generators are drawn by `\pic`. Each pic in
-`material/generator.tikz` lives in **pic-local frame `x ∈ [−0.5, 0.5]`,
-`y ∈ [−0.5, 0.5]`**. The pic exposes its tips as
-
-```
-(<name>-in-0), (<name>-in-1), …    on the left edge (x = -0.5)
-(<name>-out-0), (<name>-out-1), …  on the right edge (x = +0.5)
-```
-
-Top-first ordering: for `n` tips, `y_k = 0.5 − k/(n−1)` for `n ≥ 2`, or
-`y_0 = 0` for `n = 1`.
-
-To map the pic into the box convention `[0, w] × [0, h]`, codegen
-emits `\pic (id) at (w/2, h/2) {pic};`. With defaults `w = h = 1`,
-the pic's local origin lands at `(0.5, 0.5)`, so its tip at pic-local
-`x = −0.5` lands at scope-local `x = 0` (the box's left edge), and
-similarly on the right. **This is exactly why the box convention says
-"tips on the left at x = 0, on the right at x = w"** — it lines up.
-
-### 7.3 `renderer` and unique anchor names
-
-```go
-type renderer struct {
-    env     typecheck.Env
-    counter int
+```rust
+struct Renderer<'a> {
+    env: &'a Env,
+    next_id: usize,
 }
-func (r *renderer) id() string { r.counter++; return fmt.Sprintf("n%d", r.counter) }
 ```
 
-Every box gets a fresh `nK` prefix from `r.id()`. Anchor names like
-`n3-in-0` are then globally unique even when the same generator name
-is used twice in an expression.
+Every box gets a fresh prefix from `fresh(prefix)`, generating globally-unique
+names like `g1`, `id_in_2`, `a3`.
 
-### 7.4 `renderId` — identity on N wires
+### 7.3 `render_id` — identity on N wires
 
-```go
-const w, h, y = 1.0, 1.0, 0.5
-```
+A single straight wire from `(0, 0.5)` to `(1, 0.5)`. Regardless of `N`, only
+one visual wire is drawn. The `left` and `right` slices each contain `N`
+entries all aliasing the same anchor, so composition with a multi-input
+generator fans out at the join.
 
-A single straight wire from `(0, 0.5)` to `(1, 0.5)`. Regardless of
-`N`, only **one** wire is drawn — the type-level multiplicity `N` is
-not depicted. The box's `left[]` and `right[]` slices each contain
-`N` entries, **all aliasing the same anchor**. So a composition like
-`id(2) ; mult` legitimately attaches both of `mult`'s in-tips to the
-same identity tip; the wire fans out at the join.
+### 7.4 `render_swap` — visual swap is always 2×2
 
-This is the "visual arity ≠ type arity" model. It keeps the diagram
-clean without sacrificing typechecker precision.
+Two visual tips on each side. The two crossing wires are drawn as smooth
+S-curves using bezier control points with a white `preaction` stroke for the
+over/under crossing effect. The left/right anchor arrays alias the visual tips
+to match the type-level `m` and `n` counts.
 
-### 7.5 `renderSwap` — visual swap is always 2 × 2
+### 7.5 `render_gen` — user-defined generators
 
-Like `Id`, `Swap` ignores `M, N` for drawing purposes. Two visual
-tips on each side:
+Looks up the generator in the environment, determines visual vs type-level wire
+counts, validates the ratios, and emits a `\pic` with the generator's width and
+height. The pic-local coordinate frame is expected to be `[-0.5, 0.5]` in both
+axes, with anchors named `<pic-id>-in-k` and `<pic-id>-out-k`.
 
-```
-inTop  at (0, 1)    outTop  at (w, 1)
-inBot  at (0, 0)    outBot  at (w, 0)
-```
+### 7.6 `render_tensor` — vertical stacking
 
-The two crossing wires are drawn as **smooth S-curves**:
+A is placed above B. Width is `max(A.w, B.w)`, height is `A.h + B.h`.
+Each child is horizontally centered. `reanchor_to` adds horizontal wire stubs
+when a child is narrower than the parent, ensuring both edges remain flush.
 
-```
-\draw (inBot) .. controls (w/2, 0) and (w/2, 1) .. (outTop);
-\draw[preaction={draw=white,line width=4pt}]
-      (inTop) .. controls (w/2, 1) and (w/2, 0) .. (outBot);
-```
+### 7.7 `render_comp` — sequential composition
 
-The bezier control points are at the midpoint x with the start and
-end y of the *same* wire. This is the standard horizontal-tangent
-S-curve: it leaves the input flat, bends towards the opposite y,
-crosses at `(w/2, h/2)`, and arrives flat at the output. The
-`preaction={draw=white,line width=4pt}` on the top-to-bottom wire is
-a TikZ trick: before drawing the line, paint a fatter white line
-over it, which erases the crossing line underneath and produces the
-over/under effect.
+Places left and right side by side with `COMP_GAP` (0.25) between them. Both
+children are vertically centered within the combined height. Connecting wires
+use `to[out=0,in=180]` for smooth horizontal-to-horizontal curves.
 
-`left[]` and `right[]` alias the visual tips: the top `M` left
-entries all point at `inTop`, the bottom `N` at `inBot`, and the
-output side is permuted (`outTop` receives the bottom `N`, `outBot`
-receives the top `M`).
+### 7.8 `generate` — the public entry
 
-### 7.6 `renderGen` — user-defined generators
-
-```go
-pic := g.Pic
-if pic == "" { pic = g.Value }
-w := g.Width   ; if w == 0 { w = 1 }
-h := g.Height  ; if h == 0 { h = 1 }
-\pic (id) at (w/2, h/2) {pic};
-```
-
-Width and height default to 1 × 1. They can be overridden per generator
-in the JSON if a particular glyph needs more room (e.g. a scalar with a
-long label). `left[i] = "<id>-in-<i>"`, `right[j] = "<id>-out-<j>"`.
-
-### 7.7 `renderTensor` — vertical stacking
-
-`A * B` places A *above* B (A in the upper half, B in the lower).
-Width is `max(A.w, B.w)`; height is `A.h + B.h`. Each child is
-horizontally centered within the parent width: `axOff = (w - A.w)/2`,
-`bxOff = (w - B.w)/2`. A is shifted up by `B.h` so it lands above B.
-
-After placing the children, `extendWires` adds horizontal stubs when a
-child is narrower than the parent — so the parent's left and right
-edges still receive flush tips. There are four calls:
-
-```go
-r.extendWires(&sb, a, axOff,         0, true)   // a's left tips out to x=0
-r.extendWires(&sb, a, axOff + a.w,   w, false)  // a's right tips out to x=w
-r.extendWires(&sb, b, bxOff,         0, true)
-r.extendWires(&sb, b, bxOff + b.w,   w, false)
-```
-
-A common past bug was passing `targetX = w` for the *left* extension —
-which drew stubs going from input tips out to the right edge of the
-box. Always pass `0` for left and `w` for right.
-
-`extendWires` skips emission when `|currentX − targetX| < 1e-9` —
-i.e. when the child is already flush with the parent's edge.
-
-### 7.8 `renderComp` — sequential composition
-
-`f ; g` places f and g side by side with a `gap` (currently 0.25)
-between them. Both children are vertically centered within the
-combined height `max(A.h, B.h)`. Then for every output wire of A there
-is a wire `\draw (a.right[i]) to[out=0,in=180] (b.left[i]);` — leaving
-A's tip horizontally and arriving at B's tip horizontally.
-
-`to[out=0,in=180]` is the standard TikZ "head-to-tail" curve. If both
-tips happen to sit at the same y the curve degenerates into a straight
-line; otherwise it's a smooth bezier. Future work (mentioned in §11)
-will replace this with shift-to-align so wires are *always* straight.
-
-### 7.9 `emitScoped`
-
-Wraps a child's body in `\begin{scope}[shift={(x,y)}] … \end{scope}`
-unless both offsets are zero, in which case the body is emitted
-inline. Saves a few lines of output noise on uncomposed pictures.
-
-### 7.10 `Generate` — the public entry
-
-`Generate(node, env)` builds a `renderer`, calls `render(node)`,
-and wraps the resulting `body` in `\begin{tikzpicture}…\end{tikzpicture}`.
-That's the entire emitter API.
+Builds a `Renderer`, calls `render`, and wraps the body in
+`\begin{tikzpicture}…\end{tikzpicture}`.
 
 ---
 
-## 8. Pic conventions (`material/generator.tikz`)
+## 8. Coding conventions
 
-A pic is a TikZ macro (`<name>/.pic = { … }`) that draws one generator
-glyph in pic-local coordinates. The rules:
-
-1. **Frame**: `x ∈ [−0.5, 0.5]`, `y ∈ [−0.5, 0.5]`. Stay inside this
-   box; codegen assumes nothing leaks out.
-2. **Tip anchors**: declare `\coordinate (-in-k)` and `\coordinate
-   (-out-k)` at the appropriate y, top-first. Codegen references
-   these names externally as `<pic-id>-in-k` and `<pic-id>-out-k`.
-3. **Wires first, nodes last**. Draw any internal lines first, then
-   place the coloured node so its fill covers the wire stubs that
-   pass through the node's interior. Without this ordering, the
-   wires would punch through the white-filled `whitedot` and make
-   it look as if there's a black line crossing the dot.
-4. **Don't extend past the tip x-coordinates** (`±0.5`). The visible
-   ends of the wires must be exactly at the box edges so composition
-   joins look continuous.
-
-### 8.1 Styles (`material/generator.tikzstyles`)
-
-Four named styles are referenced by the pics:
-
-- `whitedot` — solid white circle with a black outline.
-- `blackdot` — solid black circle.
-- `boxnode_right` / `boxnode_left` — rounded rectangles with one
-  flat side, used for the scalar / coscalar boxes.
-
-If you add a new generator that needs a different glyph (a triangle,
-say), add the style here and reference it in the pic.
-
-### 8.2 Adding a new generator (end-to-end)
-
-1. Define the pic in `material/generator.tikz`. Follow the four rules
-   in §8. Use existing pics as templates.
-2. Add an entry to the generator JSON. For the built-in defaults,
-   edit `src/assets/generators.json`; for a per-project override,
-   create a separate file and pass `-g`.
-3. (Optional) Add a style in `material/generator.tikzstyles` if you
-   need a new node shape.
-4. Run `make build` — `sync-assets` will copy the .tikz files into
-   `src/assets/`, the embed will pick them up, and the binary will
-   know about the new generator.
-5. Add a typechecker test if the generator's arity/coarity are
-   non-obvious.
+- Format with `cargo fmt`.
+- No clippy warnings — run `cargo clippy --all-targets -- -D warnings` before
+  pushing.
+- Errors are `Result<T, String>` throughout. Error messages include position
+  info from the lexer where possible.
+- Tests use Rust's built-in `#[test]` attribute. Table-driven tests preferred
+  for multiple scenarios.
+- Avoid adding dependencies. The compiler is intentionally dependency-free.
 
 ---
 
-## 9. Loader (`src/loader`)
+## 9. Tests
 
-```go
-LoadDefault() ([]lexer.Generator, error)    // reads embedded JSON
-LoadFile(path string) ([]lexer.Generator, error)
+Every module has tests:
+
+- **lexer**: token-kind sequences, identifier values, unexpected-char errors.
+- **parser**: atoms, precedence, associativity, parens, malformed input.
+- **typechecker**: atoms, tensor, comp, mismatch, unknown generator.
+- **codegen**: smoke tests — wraps `tikzpicture`, emits pics, unknown generators.
+
+Run all:
+
+```bash
+cargo test
 ```
-
-Both go through `parse(b []byte)`, which:
-
-1. Unmarshals into `struct { Generators []lexer.Generator }`.
-2. Rejects entries with empty `name`.
-3. Rejects duplicate names.
-
-These checks live here, not in `typecheck`, so an invalid generator
-file is caught immediately at startup rather than the first time the
-user composes that name.
 
 ---
 
-## 10. Embedded assets (`src/assets`)
-
-```go
-//go:embed generator.tikz
-var GeneratorTikz string
-
-//go:embed generator.tikzstyles
-var GeneratorTikzstyles string
-
-//go:embed generators.json
-var GeneratorsJSON []byte
-```
-
-The `//go:embed` directives require the source files to be inside the
-same package directory, which is why `src/assets/` exists as a copy
-target rather than `material/` being embedded directly. The
-`sync-assets` Makefile rule keeps the two in lockstep:
-
-```
-sync-assets:
-    cp material/generator.tikz       src/assets/generator.tikz
-    cp material/generator.tikzstyles src/assets/generator.tikzstyles
-```
-
-Note that `generators.json` lives only in `src/assets/`. There is no
-canonical copy in `material/` because the main LaTeX document doesn't
-need it — only the Go binary does.
-
----
-
-## 11. CLI (`cmd/propc/main.go`)
-
-The CLI is intentionally minimal. Flags:
-
-```
--i path        read expression from a file (default: stdin if no positional argument)
--o path        write output to a file (default: stdout)
--g path        use a custom generators.json (default: built-in)
---check        typecheck only; print "ok: A -> C" on stderr and exit
---standalone   wrap output in a compilable LaTeX document
-```
-
-`run()` is the single business-logic function — `main()` only parses
-flags and routes errors. The pipeline inside `run()` is exactly the
-diagram in §3: read expression, load generators, parse, typecheck,
-optionally short-circuit on `--check`, codegen, optionally wrap with
-`wrapStandalone()`, write.
-
-`wrapStandalone()` assembles a self-contained `.tex` document by
-concatenating the embedded styles, the embedded pic library, and the
-generated tikzpicture inside `\begin{document}…\end{document}`. It's
-the easiest way to compile an example without setting up a LaTeX
-project.
-
----
-
-## 12. Tests
-
-Every package except `cmd/propc` and `src/assets` has a `_test.go`.
-
-- **lexer**: token-kind sequences, identifier values, unexpected-char
-  error.
-- **parser**: atoms, precedence (`*` over `;`), left-associativity,
-  parens, malformed input.
-- **typecheck**: atoms, tensor, comp, mismatch, unknown generator,
-  nested composite.
-- **loader**: embedded default loads, file load, duplicate rejection,
-  empty-name rejection, missing-file error.
-- **codegen**: *smoke tests only*. The exact TikZ output is not
-  pinned because the layout is still evolving. We assert that:
-  - the result is wrapped in `\begin{tikzpicture}…\end{tikzpicture}`,
-  - generator pics appear in the output by name,
-  - compositions succeed,
-  - unknown generators produce an error.
-
-If you make a layout change that you want to lock in, add a golden
-test in `codegen_test.go` against a known-good string. Until then,
-prefer smoke assertions to avoid churn-by-test.
-
-Run everything with:
-
-```
-make test
-```
-
-CI runs `go vet`, `go test -race`, and `go build` on every push.
-
----
-
-## 13. Known limitations and future work
-
-- **Wire routing during composition is bezier-based**, not
-  straight. When two boxes have mismatched heights, the connecting
-  wires curve. The agreed direction is to *shift the smaller box*
-  vertically so output tips of `f` align with input tips of `g`,
-  which produces straight wires at the cost of a taller overall
-  bounding box. Not yet implemented.
-- **No parametric generators.** A generator's arity/coarity are
-  fixed at JSON-declaration time. The agreed extension is a
-  `params` array and arity/coarity *expressions* over those
-  params (e.g. `"arity": "2*n"`) so a single declaration of `sum`
-  covers `sum(1)`, `sum(2)`, etc. Parser already needs to be
-  taught the `name(args)` form for `IDENT` to make this usable.
-- **No backward error reporting from typecheck to source position.**
-  Errors say *what* went wrong but not *which token* — because the
-  AST doesn't currently carry position info. Add `Pos` to each AST
-  node if you care about precise error locations.
-- **Codegen ignores `g.Height`** for tip placement; tip y-positions
-  are derived from the canonical even-spacing convention regardless
-  of the box's declared height. This is fine for the current
-  one-tall pics but will need work if you add a tall generator.
-
----
-
-## 14. Coding conventions
-
-- Go: format with `gofmt`, vet with `go vet`. The CI fails on either.
-- One thing per package. Don't grow `codegen` into a layout DSL;
-  if you need helpers, put them in a new file inside the same
-  package.
-- Errors are formatted with `fmt.Errorf("%w", err)` when wrapping,
-  plain `fmt.Errorf("…")` when introducing a new error. No
-  sentinel errors yet; add them only when callers genuinely need
-  to switch on the error type.
-- Tests live next to the code (`x.go` + `x_test.go`). Table-driven
-  cases preferred for anything with more than two scenarios.
-- Public names are documented with a leading sentence in the godoc
-  style. Internal helpers don't need a comment unless the
-  *intent* is non-obvious.
-- Avoid bringing in dependencies. The compiler is intentionally
-  stdlib-only.
-
----
-
-## 15. PR process
+## 10. PR process
 
 1. Branch from `master`.
-2. `make sync-assets test` before pushing — the embed step is
-   silent and easy to forget.
+2. Run `cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test` before pushing.
 3. Open a PR. CI runs on push.
-4. Include in the description: *what* changed, *why*, and *one
-   end-to-end example* (an expression and the resulting tikz).
-5. For codegen changes, include a screenshot or PDF excerpt of
-   the rendered diagram in the PR — visual regressions are not
-   caught by tests.
+4. Include in the description: *what* changed, *why*, and an example expression
+   with the resulting TikZ output.
+5. For codegen changes, include a rendered diagram if possible.
 
-That's the lot. If anything in this document is wrong, out of
-date, or unclear, fix it in the same PR as the code change that
-exposed it.
+---
+
+## 11. Known limitations
+
+- **Wire routing in composition is bezier-based**, not straight. When two boxes
+  have different heights, connecting wires curve. The fix is to shift the smaller
+  box vertically so tips align.
+- **No parametric generators.** Arity/coarity are fixed per generator. The
+  `params` field and `args` on `Gen` nodes exist as scaffolding for future
+  parametric generators but are not yet used by the typechecker or codegen.
+- **Error positions are not propagated from typechecker/codegen back to the
+  source.** The AST does not currently carry position info.
