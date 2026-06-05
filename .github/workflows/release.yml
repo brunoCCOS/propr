@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0          # full git history (required)
-          ref: main               # commit back to main branch
+          ref: master               # commit back to main branch
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
