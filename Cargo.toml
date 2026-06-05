@@ -2,5 +2,12 @@
 name = "propr"
 version = "0.1.0"
 edition = "2024"
+description = "Compile a expression from a Symmetric Monoidal Theory into Tikz diagrams"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/<you>/propr"
+keywords = ["cli", "parser", "tikz", "compiler","prop", "string diagrams", "category theory", "SMT"]
+categories = ["command-line-utilities"]
+rust-version = "1.85"
 
 [dependencies]

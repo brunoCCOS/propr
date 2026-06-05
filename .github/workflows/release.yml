@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: propr
+            asset_name: propr-linux-x86_64
+          - os: macos-latest
+            artifact_name: propr
+            asset_name: propr-macos-x86_64
+          - os: windows-latest
+            artifact_name: propr.exe
+            asset_name: propr-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full git history (required)
+          ref: main               # commit back to main branch
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: cargo test --workspace --all-features
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Prepare named asset
+        shell: bash
+        run: cp target/release/${{ matrix.artifact_name }} target/release/${{ matrix.asset_name }}
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/${{ matrix.asset_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+
+      - name: Install git-cliff
+        run: cargo install git-cliff
+
+      - name: Generate changelog
+        run: git-cliff -o CHANGELOG.md
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add CHANGELOG.md
+          git commit -m "chore: update CHANGELOG for ${{ github.ref_name }}"
+          git push

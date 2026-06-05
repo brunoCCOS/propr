@@ -1,3 +1,3 @@
 pub mod generator;
-pub mod lexer;
+pub mod scan;
 pub mod tokens;
