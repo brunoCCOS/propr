@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    name: Build and release
+  build:
+    name: Build ${{ matrix.asset_name }}
     strategy:
       fail-fast: false
       matrix:
@@ -28,11 +28,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0          # full git history (required)
-          ref: master               # commit back to main branch
+      - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -43,27 +39,49 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
-      - name: Prepare named asset
+      - name: Rename binary
         shell: bash
         run: cp target/release/${{ matrix.artifact_name }} target/release/${{ matrix.asset_name }}
 
-      - name: Upload release asset
-        uses: softprops/action-gh-release@v2
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: target/release/${{ matrix.asset_name }}
-          name: ${{ github.ref_name }}
-          generate_release_notes: true
+          name: ${{ matrix.asset_name }}
+          path: target/release/${{ matrix.asset_name }}
+
+  release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: master
 
       - name: Install git-cliff
         run: cargo install git-cliff
 
-      - name: Generate changelog
+      - name: Generate CHANGELOG.md
         run: git-cliff -o CHANGELOG.md
 
-      - name: Commit and push
+      - name: Commit changelog
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add CHANGELOG.md
-          git commit -m "chore: update CHANGELOG for ${{ github.ref_name }}"
+          git diff --cached --quiet || git commit -m "chore: update CHANGELOG for ${{ github.ref_name }}"
           git push
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: binaries/*/*
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
