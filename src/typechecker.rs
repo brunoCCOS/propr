@@ -1,14 +1,13 @@
-use crate::lexer::generator::Generator;
-use crate::parser::ast;
-use std::collections::HashMap;
+use serde::Deserialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use crate::codegen::config::Env;
+use crate::parser::ast;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct Sig {
     pub arity: u32,
     pub coarity: u32,
 }
-
-pub type Env = HashMap<String, Generator>;
 
 pub fn check(expr: &ast::Expr, env: &Env) -> Result<Sig, String> {
     match expr {
@@ -25,8 +24,8 @@ pub fn check(expr: &ast::Expr, env: &Env) -> Result<Sig, String> {
                 .get(name)
                 .ok_or_else(|| format!("unknown generator: {}", name))?;
             Ok(Sig {
-                arity: generator.arity,
-                coarity: generator.coarity,
+                arity: generator.sig.arity,
+                coarity: generator.sig.coarity,
             })
         }
         ast::Expr::Tensor(left, right) => {
