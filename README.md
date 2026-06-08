@@ -1,76 +1,74 @@
 # propr
 
 `propr` is a Rust compiler for **string diagrams of symmetric monoidal theories**
-(also called **PROPs** — product and permutation categories). It parses an
-expression, type-checks arities and coarities, and emits a TikZ picture of the
-corresponding string diagram.
+(also called **PROPs**). It parses an expression, type-checks arities and
+coarities against a user-defined generator table, and emits a TikZ picture of
+the corresponding string diagram.
 
-## What it accepts
+## The language
 
-The expression language implements the syntax of PROPs:
-
-- `id(n)` — identity on `n` wires
-- `swap(m,n)` — symmetry permuting an `m` block past an `n` block
-- user-defined generators like `mult` or `sum(1,2)`
-- sequential composition with `;`
-- parallel composition (tensor) with `*`
-- parentheses for grouping
+```
+id(n)       — identity on n wires
+swap(m,n)   — symmetry permuting an m block past an n block
+<name>      — user-defined generator (arity/coarity from config)
+f ; g       — sequential composition (coarity(f) == arity(g))
+f * g       — parallel composition (tensor)
+( ... )     — grouping
+```
 
 Examples:
-
-- `mult * copy ; id(1) * swap(1,1)`
 - `id(3) ; swap(1,2)`
-- `f(1,2) ; (g * h)`
+- `mult * copy ; id(1) * swap(1,1)`
+- `(f ; g) * (h ; i)`
 
 ## Install
-
-### From source (current option)
-
-You need Rust installed (`rustup` + `cargo`):
-
-```bash
-git clone <your-repo-url>
-cd propr
-cargo install --path .
-```
-
-Then run:
-
-```bash
-propr "a * b ; c * d"
-```
-
-### Planned install options
-
-Once published, users will also be able to install with:
 
 ```bash
 cargo install propr
 ```
 
-And via prebuilt binaries from GitHub Releases.
+Or from source:
+
+```bash
+git clone <url>
+cd propr
+cargo install --path .
+```
 
 ## Usage
 
+Without a config file, only `id` and `swap` are available:
+
 ```bash
-propr "<expression>"
+propr "id(3) ; swap(1,2)"
 ```
 
-If no expression is provided, the CLI prints:
+With a config file defining custom generators:
 
-```text
-usage: propr <expression>
+```bash
+propr --config generators.toml "mult * copy"
 ```
 
-If parsing or type-checking fails, it prints an error like:
+Config format (`generators.toml`):
 
-```text
-propr: <error message>
+```toml
+[generators.mult]
+arity = 2
+coarity = 1
+pic = "multiplication"
+symbol = "⋅"
+
+[generators.copy]
+arity = 1
+coarity = 2
+pic = "copy"
 ```
+
+Required fields per generator: `arity`, `coarity`.
+Optional: `pic` (defaults to generator name), `params`, `visual_arity`,
+`visual_coarity`, `symbol`, `width`, `height`.
 
 ## Development
-
-Run local checks before committing:
 
 ```bash
 cargo fmt --check
