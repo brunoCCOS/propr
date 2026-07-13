@@ -32,7 +32,7 @@ impl<'a> Renderer<'a> {
         match expr {
             Expr::Id(n) => Ok(self.render_id(*n)),
             Expr::Swap(m, n) => Ok(self.render_swap(*m, *n)),
-            Expr::Gen { name, args: _ } => self.render_gen(name),
+            Expr::Gen { name, args } => self.render_gen(name, args),
             Expr::Tensor(top, bottom) => self.render_tensor(top, bottom),
             Expr::Comp(left, right) => self.render_comp(left, right),
         }
@@ -116,7 +116,7 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    fn render_gen(&mut self, name: &str) -> Result<Layout, String> {
+    fn render_gen(&mut self, name: &str, args: &[u32]) -> Result<Layout, String> {
         let generator = self
             .env
             .get(name)
@@ -168,11 +168,24 @@ impl<'a> Renderer<'a> {
             1.0
         };
 
+        // Zip lists
+        let args_list = args
+            .iter()
+            .zip(generator.params.iter())
+            .map(|(v, p)| format!("{}={}", p, v))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let args_str = if !args_list.is_empty() {
+            format!("[{}]", args_list)
+        } else {
+            "".to_string()
+        };
         let pic_id = self.fresh("g");
         let mut body = String::new();
         let _ = writeln!(
             &mut body,
-            "  \\pic ({}) at ({:.3},{:.3}) {{{}}};",
+            "  \\pic{} ({}) at ({:.3},{:.3}) {{{}}};",
+            args_str,
             pic_id,
             width / 2.0,
             height / 2.0,
