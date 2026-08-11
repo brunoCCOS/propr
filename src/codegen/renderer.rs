@@ -1,5 +1,5 @@
 use crate::codegen::config::Env;
-use crate::parser::ast::Expr;
+use crate::parser::ast::{Arg, Expr};
 use std::fmt::Write;
 
 const COMP_GAP: f32 = 0.25;
@@ -116,7 +116,7 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    fn render_gen(&mut self, name: &str, args: &[u32]) -> Result<Layout, String> {
+    fn render_gen(&mut self, name: &str, args: &[Arg]) -> Result<Layout, String> {
         let generator = self
             .env
             .get(name)

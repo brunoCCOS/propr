@@ -3,7 +3,7 @@ use crate::{
         scan::Lexer,
         tokens::{Token, TokenKind},
     },
-    parser::ast::Expr,
+    parser::ast::{Arg, Expr},
 };
 
 struct Parser {
@@ -56,12 +56,20 @@ impl Parser {
             TokenKind::Id => {
                 self.advance();
                 let args = self.parse_fixed_args(1)?;
-                Ok(Expr::Id(args[0]))
+                Ok(Expr::Id(args[0].to_u32().expect(
+                    "Argument for identity should be a positive integer",
+                )))
             }
             TokenKind::Swap => {
                 self.advance();
                 let args = self.parse_fixed_args(2)?;
-                Ok(Expr::Swap(args[0], args[1]))
+                let arg0 = args[0]
+                    .to_u32()
+                    .expect("Argument for swap should be a positive integer");
+                let arg1 = args[1]
+                    .to_u32()
+                    .expect("Argument for swap should be a positive integer");
+                Ok(Expr::Swap(arg0, arg1))
             }
             TokenKind::Ident(name) => {
                 self.advance();
@@ -85,13 +93,14 @@ impl Parser {
         }
     }
 
-    fn parse_fixed_args(&mut self, n: usize) -> Result<Vec<u32>, String> {
+    fn parse_fixed_args(&mut self, n: usize) -> Result<Vec<Arg>, String> {
         if self.peek().kind != TokenKind::Lparen {
             return Err(format!("expected '(' at position {}", self.peek().pos));
         }
         self.advance();
 
         let mut out = Vec::with_capacity(n);
+
         for i in 0..n {
             if i > 0 {
                 if self.peek().kind != TokenKind::Comma {
@@ -99,24 +108,33 @@ impl Parser {
                 }
                 self.advance();
             }
-            match self.peek().kind {
-                TokenKind::Number(v) => {
-                    out.push(v);
-                    self.advance();
+
+            let token = self.peek();
+
+            let arg = match &token.kind {
+                TokenKind::Number(value) => Arg::Number(*value),
+                TokenKind::Letter(value) => Arg::Letter(*value),
+                kind => {
+                    return Err(format!(
+                        "expected number or letter at position {}, got {:?}",
+                        token.pos, kind
+                    ));
                 }
-                _ => return Err(format!("expected number at position {}", self.peek().pos)),
-            }
+            };
+            out.push(arg);
+            self.advance();
         }
 
         if self.peek().kind != TokenKind::Rparen {
             return Err(format!("expected ')' at position {}", self.peek().pos));
         }
+
         self.advance();
         Ok(out)
     }
 
     // '(' NUMBER (',' NUMBER)* ')' — any count (for generator calls).
-    fn parse_variadic_args(&mut self) -> Result<Vec<u32>, String> {
+    fn parse_variadic_args(&mut self) -> Result<Vec<Arg>, String> {
         if self.peek().kind != TokenKind::Lparen {
             return Err(format!("expected '(' at position {}", self.peek().pos));
         }
@@ -131,13 +149,20 @@ impl Parser {
                 }
                 self.advance();
             }
-            match self.peek().kind {
-                TokenKind::Number(v) => {
-                    out.push(v);
-                    self.advance();
+            let token = self.peek();
+
+            let arg = match &token.kind {
+                TokenKind::Number(value) => Arg::Number(*value),
+                TokenKind::Letter(value) => Arg::Letter(*value),
+                kind => {
+                    return Err(format!(
+                        "expected number or letter at position {}, got {:?}",
+                        token.pos, kind
+                    ));
                 }
-                _ => return Err(format!("expected number at position {}", self.peek().pos)),
-            }
+            };
+            out.push(arg);
+            self.advance();
             i += 1;
         }
 

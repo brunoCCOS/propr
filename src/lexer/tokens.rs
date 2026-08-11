@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    Number(u32),
+    Number(i32),
+    Letter(char),
     Ident(String),
     Id,
     Swap,

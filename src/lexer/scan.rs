@@ -100,7 +100,7 @@ impl Lexer {
                     .parse::<u32>()
                     .unwrap();
                 Ok(Token {
-                    kind: TokenKind::Number(n),
+                    kind: TokenKind::Number(n as i32),
                     pos: start,
                 })
             }
@@ -116,6 +116,10 @@ impl Lexer {
                 let kind = match word.as_str() {
                     "id" => TokenKind::Id,
                     "swap" => TokenKind::Swap,
+                    // A single alphabetic character becomes Letter.
+                    _ if word.chars().count() == 1 => {
+                        TokenKind::Letter(word.chars().next().unwrap())
+                    }
                     _ => TokenKind::Ident(word),
                 };
                 Ok(Token { kind, pos: start })
