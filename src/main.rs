@@ -4,7 +4,8 @@ use propr::{codegen::config, compile};
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Expression to compile
+    /// Expression to compile, or an equation chaining expressions with
+    /// `=` / `⊆` (ASCII alias `<=`), e.g. "mult ; copy = copy * copy ; id(1) * mult"
     expr: String,
 
     /// Path to generators.toml

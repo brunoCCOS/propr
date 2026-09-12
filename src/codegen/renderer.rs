@@ -1,9 +1,10 @@
 use crate::codegen::config::Env;
 use crate::codegen::layout::{Anchor, Layout, MIN_PITCH};
-use crate::parser::ast::{Arg, Expr};
+use crate::parser::ast::{Arg, Equation, Expr, RelOp};
 use std::fmt::Write;
 
 const COMP_GAP: f32 = 0.25;
+const SIDE_GAP: f32 = 1.0;
 
 struct Renderer<'a> {
     env: &'a Env,
@@ -409,6 +410,50 @@ pub fn generate(expr: &Expr, env: &Env) -> Result<String, String> {
     Ok(out)
 }
 
+pub fn generate_equation(equation: &Equation, env: &Env) -> Result<String, String> {
+    let mut renderer = Renderer::new(env);
+    let layouts: Vec<Layout> = equation
+        .sides
+        .iter()
+        .map(|side| renderer.render(side))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let max_height = layouts.iter().map(|l| l.height).fold(0.0_f32, f32::max);
+
+    let mut body = String::new();
+    let mut x = 0.0_f32;
+    for (i, layout) in layouts.iter().enumerate() {
+        let y = (max_height - layout.height) / 2.0;
+        Renderer::emit_scoped(&mut body, x, y, &layout.body);
+        let side_end = x + layout.width;
+
+        if i < equation.ops.len() {
+            let gap_mid = side_end + SIDE_GAP / 2.0;
+            let symbol = match equation.ops[i] {
+                RelOp::Eq => "$=$",
+                RelOp::Subset => "$\\subseteq$",
+            };
+            let node_id = renderer.fresh("rel");
+            let _ = writeln!(
+                &mut body,
+                "  \\node ({}) at ({:.3},{:.3}) {{{}}};",
+                node_id,
+                gap_mid,
+                max_height / 2.0,
+                symbol
+            );
+        }
+
+        x = side_end + SIDE_GAP;
+    }
+
+    let mut out = String::new();
+    out.push_str("\\begin{tikzpicture}\n");
+    out.push_str(&body);
+    out.push_str("\\end{tikzpicture}\n");
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,6 +720,86 @@ mod tests {
             gap > 0.25 + 1e-3,
             "composition gap ({}) should grow beyond fixed 0.25 for tall compositions: {}",
             gap,
+            out
+        );
+    }
+
+    // --- Step 5: generate_equation ---
+
+    // (1) A single-relation equation renders in ONE tikzpicture, with a "$=$"
+    // relation node, and content from both sides (mult/copy pics and an id
+    // wire).
+    #[test]
+    fn generate_equation_single_relation_one_tikzpicture_with_both_sides() {
+        let equation =
+            crate::parser::engine::parse_equation("copy ; mult = id(1)").expect("parse equation");
+        let out = generate_equation(&equation, &env()).expect("generate equation");
+        assert_eq!(
+            out.matches("\\begin{tikzpicture}").count(),
+            1,
+            "expected exactly one tikzpicture, got: {}",
+            out
+        );
+        assert!(
+            out.contains("$=$"),
+            "expected an $=$ relation node: {}",
+            out
+        );
+        assert!(out.contains("multiplication"), "missing mult pic: {}", out);
+        assert!(out.contains("copy"), "missing copy pic: {}", out);
+        assert!(
+            out.contains("id_in_") || out.contains("id_out_"),
+            "missing id(1) wire anchors: {}",
+            out
+        );
+    }
+
+    // (3) A chain "a = b ⊆ c" produces exactly one $=$ node, one $\subseteq$
+    // node, and still a single tikzpicture.
+    #[test]
+    fn generate_equation_chain_has_one_of_each_relation_node_and_one_tikzpicture() {
+        let equation = crate::parser::engine::parse_equation("id(1) = id(1) ⊆ id(1)")
+            .expect("parse chain equation");
+        let out = generate_equation(&equation, &env()).expect("generate chain");
+        assert_eq!(
+            out.matches("\\begin{tikzpicture}").count(),
+            1,
+            "expected exactly one tikzpicture for a chain: {}",
+            out
+        );
+        assert_eq!(
+            out.matches("$=$").count(),
+            1,
+            "expected exactly one $=$ node: {}",
+            out
+        );
+        assert_eq!(
+            out.matches("\\subseteq").count(),
+            1,
+            "expected exactly one \\subseteq node: {}",
+            out
+        );
+    }
+
+    // (4) No coordinate-name collisions across sides: every \coordinate name
+    // must be unique even though both sides are structurally identical
+    // id(1) expressions rendered by the same Renderer instance.
+    #[test]
+    fn generate_equation_coordinate_names_are_unique_across_sides() {
+        let equation =
+            crate::parser::engine::parse_equation("id(1) = id(1)").expect("parse equation");
+        let out = generate_equation(&equation, &env()).expect("generate equation");
+        let coord_re = regex::Regex::new(r"\\coordinate \(([^)]+)\)").unwrap();
+        let names: Vec<&str> = coord_re
+            .captures_iter(&out)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        let unique: std::collections::HashSet<&str> = names.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "coordinate names must be unique across all sides, got: {:?} in: {}",
+            names,
             out
         );
     }
