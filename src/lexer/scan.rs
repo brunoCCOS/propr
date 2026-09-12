@@ -90,6 +90,35 @@ impl Lexer {
                     pos: start,
                 })
             }
+            '=' => {
+                self.advance();
+                Ok(Token {
+                    kind: TokenKind::Eq,
+                    pos: start,
+                })
+            }
+            '⊆' => {
+                self.advance();
+                Ok(Token {
+                    kind: TokenKind::Subset,
+                    pos: start,
+                })
+            }
+            '<' => {
+                self.advance();
+                if self.peek() == Some('=') {
+                    self.advance();
+                    Ok(Token {
+                        kind: TokenKind::Subset,
+                        pos: start,
+                    })
+                } else {
+                    Err(format!(
+                        "unexpected character {:?} at position {}",
+                        c, start
+                    ))
+                }
+            }
             c if c.is_ascii_digit() => {
                 while self.pos < self.src.len() && self.src[self.pos].is_ascii_digit() {
                     self.pos += 1;
@@ -98,9 +127,9 @@ impl Lexer {
                     .iter()
                     .collect::<String>()
                     .parse::<u32>()
-                    .unwrap();
+                    .map_err(|_| format!("number overflow/too large at position {}", start))?;
                 Ok(Token {
-                    kind: TokenKind::Number(n as i32),
+                    kind: TokenKind::Number(n),
                     pos: start,
                 })
             }
@@ -116,10 +145,6 @@ impl Lexer {
                 let kind = match word.as_str() {
                     "id" => TokenKind::Id,
                     "swap" => TokenKind::Swap,
-                    // A single alphabetic character becomes Letter.
-                    _ if word.chars().count() == 1 => {
-                        TokenKind::Letter(word.chars().next().unwrap())
-                    }
                     _ => TokenKind::Ident(word),
                 };
                 Ok(Token { kind, pos: start })
@@ -131,14 +156,14 @@ impl Lexer {
         }
     }
 
-    pub fn tokenize(&mut self) -> Vec<Token> {
+    pub fn tokenize(&mut self) -> Result<Vec<Token>, String> {
         let mut out: Vec<Token> = Vec::new();
         loop {
-            let t = self.advance_token().expect("lex error");
+            let t = self.advance_token()?;
             let is_eof = t.kind == TokenKind::Eof;
             out.push(t);
             if is_eof {
-                return out;
+                return Ok(out);
             }
         }
     }
@@ -152,6 +177,7 @@ mod tests {
     fn kinds(input: &str) -> Vec<TokenKind> {
         Lexer::new(input)
             .tokenize()
+            .expect("expected tokenize to succeed")
             .into_iter()
             .map(|t| t.kind)
             .collect()
@@ -205,8 +231,57 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn tokenize_rejects_unknown_char() {
-        Lexer::new("f @ g").tokenize();
+        let result = Lexer::new("f @ g").tokenize();
+        assert!(result.is_err(), "expected Err for unknown character '@'");
+    }
+
+    #[test]
+    fn tokenize_eq_token() {
+        use TokenKind::*;
+        assert_eq!(kinds("="), vec![Eq, Eof]);
+    }
+
+    #[test]
+    fn tokenize_subset_token_unicode_and_ascii_alias() {
+        use TokenKind::*;
+        assert_eq!(kinds("⊆"), vec![Subset, Eof]);
+        assert_eq!(kinds("<="), vec![Subset, Eof]);
+    }
+
+    #[test]
+    fn tokenize_equation_sequence() {
+        use TokenKind::*;
+        assert_eq!(
+            kinds("f = g ⊆ h"),
+            vec![
+                Ident("f".into()),
+                Eq,
+                Ident("g".into()),
+                Subset,
+                Ident("h".into()),
+                Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenize_number_overflow_is_lex_error() {
+        let result = Lexer::new("id(99999999999)").tokenize();
+        let err = result.expect_err("expected overflow to be a lex error, not a panic");
+        let lower = err.to_lowercase();
+        assert!(
+            lower.contains("overflow") || lower.contains("number"),
+            "error message should mention overflow/number, got: {err}"
+        );
+    }
+
+    #[test]
+    fn tokenize_number_carries_u32_without_wrap() {
+        use TokenKind::*;
+        assert_eq!(
+            kinds("id(3000000000)"),
+            vec![Id, Lparen, Number(3000000000), Rparen, Eof]
+        );
     }
 }

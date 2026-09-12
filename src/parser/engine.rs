@@ -112,8 +112,13 @@ impl Parser {
             let token = self.peek();
 
             let arg = match &token.kind {
-                TokenKind::Number(value) => Arg::Number(*value),
-                TokenKind::Letter(value) => Arg::Letter(*value),
+                TokenKind::Number(value) => Arg::Number(
+                    i32::try_from(*value)
+                        .map_err(|_| format!("number too large at position {}", token.pos))?,
+                ),
+                TokenKind::Ident(s) if s.chars().count() == 1 => {
+                    Arg::Letter(s.chars().next().unwrap())
+                }
                 kind => {
                     return Err(format!(
                         "expected number or letter at position {}, got {:?}",
@@ -152,8 +157,13 @@ impl Parser {
             let token = self.peek();
 
             let arg = match &token.kind {
-                TokenKind::Number(value) => Arg::Number(*value),
-                TokenKind::Letter(value) => Arg::Letter(*value),
+                TokenKind::Number(value) => Arg::Number(
+                    i32::try_from(*value)
+                        .map_err(|_| format!("number too large at position {}", token.pos))?,
+                ),
+                TokenKind::Ident(s) if s.chars().count() == 1 => {
+                    Arg::Letter(s.chars().next().unwrap())
+                }
                 kind => {
                     return Err(format!(
                         "expected number or letter at position {}, got {:?}",
@@ -175,7 +185,7 @@ impl Parser {
 }
 
 pub fn parse(input: &str) -> Result<Expr, String> {
-    let tokens = Lexer::new(input).tokenize();
+    let tokens = Lexer::new(input).tokenize()?;
     let mut p = Parser::new(tokens);
     let expr = p.parse_expr()?;
     if p.peek().kind != TokenKind::Eof {

@@ -1,7 +1,6 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    Number(i32),
-    Letter(char),
+    Number(u32),
     Ident(String),
     Id,
     Swap,
@@ -10,6 +9,8 @@ pub enum TokenKind {
     Comma,
     Comp,
     Tensor,
+    Eq,
+    Subset,
     Eof,
 }
 
