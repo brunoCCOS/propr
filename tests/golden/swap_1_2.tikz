@@ -1,0 +1,11 @@
+\begin{tikzpicture}
+  \coordinate (sw_in_1) at (0,1.500);
+  \coordinate (sw_out_2) at (1.000,1.500);
+  \coordinate (sw_in_3) at (0,1.000);
+  \coordinate (sw_out_4) at (1.000,1.000);
+  \coordinate (sw_in_5) at (0,0.500);
+  \coordinate (sw_out_6) at (1.000,0.500);
+  \draw (sw_in_1) .. controls (0.500,1.500) and (0.500,0.500) .. (sw_out_6);
+  \draw (sw_in_3) .. controls (0.500,1.000) and (0.500,1.500) .. (sw_out_2);
+  \draw (sw_in_5) .. controls (0.500,0.500) and (0.500,1.000) .. (sw_out_4);
+\end{tikzpicture}

@@ -1,0 +1,8 @@
+\begin{tikzpicture}
+  \pic (g1) at (0.500,0.500) {copy};
+  \begin{scope}[shift={(1.500,0.000)}]
+  \pic (g2) at (0.500,0.500) {multiplication};
+  \end{scope}
+  \draw (g1-out-0) to[out=0,in=180] (g2-in-0);
+  \draw (g1-out-1) to[out=0,in=180] (g2-in-1);
+\end{tikzpicture}

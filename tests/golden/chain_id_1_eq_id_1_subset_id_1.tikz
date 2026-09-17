@@ -1,0 +1,17 @@
+\begin{tikzpicture}
+  \coordinate (id_in_1) at (0,0.500);
+  \coordinate (id_out_2) at (1.000,0.500);
+  \draw (id_in_1) -- (id_out_2);
+  \node (rel7) at (1.500,0.250) {$=$};
+  \begin{scope}[shift={(2.000,0.000)}]
+  \coordinate (id_in_3) at (0,0.500);
+  \coordinate (id_out_4) at (1.000,0.500);
+  \draw (id_in_3) -- (id_out_4);
+  \end{scope}
+  \node (rel8) at (3.500,0.250) {$\subseteq$};
+  \begin{scope}[shift={(4.000,0.000)}]
+  \coordinate (id_in_5) at (0,0.500);
+  \coordinate (id_out_6) at (1.000,0.500);
+  \draw (id_in_5) -- (id_out_6);
+  \end{scope}
+\end{tikzpicture}
