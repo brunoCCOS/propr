@@ -12,6 +12,11 @@ rust-version = "1.85"
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
-regex = "1.12.3"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
+
+[dev-dependencies]
+# Only used by src/codegen/renderer.rs's #[cfg(test)] test-support helpers
+# (parsing emitted TikZ back out to verify coordinates/wires), never by
+# production code -- see NIT 10, round-4 rework.
+regex = "1.12.3"

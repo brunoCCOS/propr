@@ -2,10 +2,10 @@
   \coordinate (id_in_1) at (0,0.500);
   \coordinate (id_out_2) at (1.000,0.500);
   \draw (id_in_1) -- (id_out_2);
-  \coordinate (id_in_3) at (0,1.000);
-  \coordinate (id_out_4) at (1.000,1.000);
+  \coordinate (id_in_3) at (0,1.500);
+  \coordinate (id_out_4) at (1.000,1.500);
   \draw (id_in_3) -- (id_out_4);
-  \coordinate (id_in_5) at (0,1.500);
-  \coordinate (id_out_6) at (1.000,1.500);
+  \coordinate (id_in_5) at (0,2.500);
+  \coordinate (id_out_6) at (1.000,2.500);
   \draw (id_in_5) -- (id_out_6);
 \end{tikzpicture}

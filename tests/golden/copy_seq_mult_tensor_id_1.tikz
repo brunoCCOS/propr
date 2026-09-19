@@ -1,19 +1,19 @@
 \begin{tikzpicture}
-  \begin{scope}[shift={(0.000,0.500)}]
-  \pic (g1) at (0.500,0.500) {copy};
-  \begin{scope}[shift={(1.500,0.000)}]
-  \pic (g2) at (0.500,0.500) {multiplication};
+  \begin{scope}[shift={(0.000,1.000)}]
+  \pic (g1) at (0.500,1.000) {copy};
+  \begin{scope}[shift={(1.250,0.000)}]
+  \pic (g2) at (0.500,1.000) {multiplication};
   \end{scope}
-  \draw (g1-out-0) to[out=0,in=180] (g2-in-0);
   \draw (g1-out-1) to[out=0,in=180] (g2-in-1);
+  \draw (g1-out-0) to[out=0,in=180] (g2-in-0);
   \end{scope}
-  \begin{scope}[shift={(0.750,0.000)}]
+  \begin{scope}[shift={(0.625,0.000)}]
   \coordinate (id_in_3) at (0,0.500);
   \coordinate (id_out_4) at (1.000,0.500);
   \draw (id_in_3) -- (id_out_4);
   \end{scope}
   \coordinate (a5) at (0.000,0 |- id_in_3);
   \draw (id_in_3) -- (a5);
-  \coordinate (a6) at (2.500,0 |- id_out_4);
+  \coordinate (a6) at (2.250,0 |- id_out_4);
   \draw (id_out_4) -- (a6);
 \end{tikzpicture}

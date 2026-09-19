@@ -1,6 +1,6 @@
 \begin{tikzpicture}
-  \begin{scope}[shift={(0.000,1.000)}]
-  \pic (g1) at (0.500,0.500) {multiplication};
+  \begin{scope}[shift={(0.000,2.000)}]
+  \pic (g1) at (0.500,1.000) {multiplication};
   \end{scope}
-  \pic (g2) at (0.500,0.500) {copy};
+  \pic (g2) at (0.500,1.000) {copy};
 \end{tikzpicture}

@@ -1,4 +1,5 @@
 **/*.rs.bk
+*.bak_check
 
 .DS_Store
 .idea/

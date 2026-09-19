@@ -2,33 +2,33 @@
 // wire pitch that makes picture height grow with wire count instead of
 // staying fixed at 1.0.
 
-pub(crate) const MIN_PITCH: f32 = 0.5;
+pub(crate) const MIN_PITCH: f32 = 1.0;
 
-/// A named TikZ anchor with an optional known y position.
+/// A named TikZ anchor with a known y position.
 ///
-/// `y` is `Some` for anchors the layout engine places itself (id/swap,
-/// exposed coordinates from reanchoring) and `None` for anchors that live
-/// inside a user-drawn `\pic` -- propr never sees inside a pic, so their true
-/// vertical position is unknown at layout time.
+/// Every anchor in this renderer is placed by the layout engine itself:
+/// id/swap, exposed coordinates from reanchoring, and (per
+/// `generator.tikz`'s documented top-first, evenly-spaced port convention,
+/// which every pic in `generator.tikz` now conforms to) every generator
+/// `\pic`'s in/out ports -- see `render_gen`. `y` is a plain `f32`: every
+/// code path that builds an `Anchor` (`render_id`/`render_swap`/
+/// `render_gen`/`reanchor_to`) always knows the position it is placing, so
+/// there is no "unknown y" case left to represent.
 #[derive(Debug, Clone)]
 pub(crate) struct Anchor {
     pub name: String,
-    pub y: Option<f32>,
+    pub y: f32,
 }
 
 impl Anchor {
     pub fn known(name: String, y: f32) -> Self {
-        Self { name, y: Some(y) }
-    }
-
-    pub fn unknown(name: String) -> Self {
-        Self { name, y: None }
+        Self { name, y }
     }
 
     pub fn shifted(&self, dy: f32) -> Self {
         Self {
             name: self.name.clone(),
-            y: self.y.map(|y| y + dy),
+            y: self.y + dy,
         }
     }
 }
